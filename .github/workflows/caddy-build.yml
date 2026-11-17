@@ -1,0 +1,99 @@
+name: Build Caddy (Cloudflare-DNS)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "caddy/**"
+      - ".github/workflows/caddy-build.yml"
+  workflow_dispatch:
+  schedule:
+    # Täglich 02:30 UTC: nur bauen, wenn das Caddy-Basis-Image neuer ist
+    - cron: '30 2 * * *'
+    # Sonntags 03:30 UTC: immer bauen, damit Updates des Cloudflare-Moduls mitkommen
+    - cron: '30 3 * * 0'
+
+env:
+  IMAGE: ghcr.io/ricosweb/caddy-cloudflare
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      # Prüft, ob das Caddy-Basis-Image neuer ist als unser Image auf GHCR
+      - name: Base Image Update prüfen
+        id: check
+        uses: lucacome/docker-image-update-checker@v3
+        with:
+          base-image: 'caddy:2'
+          image: 'ghcr.io/ricosweb/caddy-cloudflare:latest'
+        continue-on-error: true   # beim allerersten Lauf gibt es das Image noch nicht
+
+      # Bauen bei Push/manuell, beim Wochen-Lauf, oder wenn das Basis-Image neuer ist
+      - name: Entscheiden, ob gebaut wird
+        id: go
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] \
+             || [ "${{ github.event.schedule }}" = "30 3 * * 0" ] \
+             || [ "${{ steps.check.outputs.needs-updating }}" = "true" ] \
+             || [ "${{ steps.check.outcome }}" = "failure" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Buildx einrichten
+        if: steps.go.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3.10.0
+
+      - name: Bei GHCR anmelden
+        if: steps.go.outputs.build == 'true'
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Erzeugt das OCI Base Digest Label für den Update-Checker
+      - name: Docker Metadaten generieren
+        if: steps.go.outputs.build == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          annotations: |
+            org.opencontainers.image.base.digest=${{ steps.check.outputs.base-digest }}
+
+      - name: Image bauen & pushen
+        if: steps.go.outputs.build == 'true'
+        uses: docker/build-push-action@v6.15.0
+        with:
+          context: ./caddy
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          pull: true
+          tags: ${{ env.IMAGE }}:latest
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=caddy
+          cache-to: type=gha,mode=max,scope=caddy
+
+      - name: Version auslesen
+        if: steps.go.outputs.build == 'true'
+        id: ver
+        run: echo "version=$(docker run --rm ${{ env.IMAGE }}:latest caddy version | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: ntfy Benachrichtigung senden
+        if: success() && steps.go.outputs.build == 'true'
+        run: |
+          curl \
+            -d "Neues Caddy-Image (${{ steps.ver.outputs.version }}, mit Cloudflare-DNS) gebaut und auf GHCR gepusht!" \
+            -H "Title: GHCR Build Erfolgreich" \
+            -H "Tags: package,rocket" \
+            https://ntfy.sh/JMDikA6mwmjpyfm7
