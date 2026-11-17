@@ -3,6 +3,10 @@ name: Build Multi-Arch Docker Image
 on:
   push:
     branches: [ "main" ]
+    # Änderungen am Caddy-Image lösen keinen PHP-Build aus
+    paths-ignore:
+      - "caddy/**"
+      - ".github/workflows/caddy-build.yml"
   workflow_dispatch:
   schedule:
     # Läuft jeden Tag um 02:00 Uhr UTC automatisch
