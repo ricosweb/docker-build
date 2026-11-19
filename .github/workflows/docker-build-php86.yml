@@ -1,0 +1,78 @@
+name: Build Multi-Arch Docker Image (PHP 8.6)
+
+on:
+  push:
+    branches: [ "main" ]
+    # Nur Änderungen am PHP-8.6-Image lösen diesen Build aus
+    paths:
+      - "php86/**"
+      - ".github/workflows/docker-build-php86.yml"
+  workflow_dispatch:
+  schedule:
+    # Läuft jeden Tag um 02:00 Uhr UTC automatisch
+    - cron: '0 2 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      # Prüft, ob das PHP Base Image neuer ist als dein Image auf GHCR
+      - name: Base Image Update prüfen
+        id: check
+        uses: lucacome/docker-image-update-checker@v3
+        with:
+          base-image: 'php:8.6-fpm-alpine'
+          image: 'ghcr.io/ricosweb/custom_php8.6_image:latest'
+
+      - name: QEMU einrichten
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        uses: docker/setup-qemu-action@v3.6.0
+
+      - name: Buildx einrichten
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        uses: docker/setup-buildx-action@v3.10.0
+
+      - name: Bei GHCR anmelden
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Erzeugt das erforderliche OCI Base Digest Label für den Checker
+      - name: Docker Metadaten generieren
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ricosweb/custom_php8.6_image
+          annotations: |
+            org.opencontainers.image.base.digest=${{ steps.check.outputs.base-digest }}
+
+      - name: Image bauen & pushen
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        uses: docker/build-push-action@v6.15.0
+        with:
+          context: ./php86
+          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          push: true
+          pull: true
+          tags: ghcr.io/ricosweb/custom_php8.6_image:latest
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=php86
+          cache-to: type=gha,mode=max,scope=php86
+
+      # Benachrichtigung nach erfolgreichem Build via curl
+      - name: ntfy Benachrichtigung senden
+        if: success() && (github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true')
+        run: |
+          curl \
+            -d "Neues PHP 8.6 Image gebaut und auf GHCR gepusht!" \
+            -H "Title: GHCR Build Erfolgreich" \
+            -H "Tags: package,rocket" \
+            https://ntfy.sh/JMDikA6mwmjpyfm7
