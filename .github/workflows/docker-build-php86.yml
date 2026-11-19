@@ -60,7 +60,7 @@ jobs:
         uses: docker/build-push-action@v6.15.0
         with:
           context: ./php86
-          platforms: linux/amd64,linux/arm/v7,linux/arm64
+          platforms: linux/amd64,linux/arm64
           push: true
           pull: true
           tags: ghcr.io/ricosweb/custom_php8.6_image:latest
