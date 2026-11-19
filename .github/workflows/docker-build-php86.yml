@@ -22,21 +22,23 @@ jobs:
       # Prüft, ob das PHP Base Image neuer ist als dein Image auf GHCR
       - name: Base Image Update prüfen
         id: check
+        # Beim ersten Lauf existiert das GHCR-Image noch nicht -> Check darf fehlschlagen, dann wird gebaut
+        continue-on-error: true
         uses: lucacome/docker-image-update-checker@v3
         with:
           base-image: 'php:8.6-fpm-alpine'
           image: 'ghcr.io/ricosweb/custom_php8.6_image:latest'
 
       - name: QEMU einrichten
-        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure'
         uses: docker/setup-qemu-action@v3.6.0
 
       - name: Buildx einrichten
-        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure'
         uses: docker/setup-buildx-action@v3.10.0
 
       - name: Bei GHCR anmelden
-        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure'
         uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
@@ -45,7 +47,7 @@ jobs:
 
       # Erzeugt das erforderliche OCI Base Digest Label für den Checker
       - name: Docker Metadaten generieren
-        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -54,7 +56,7 @@ jobs:
             org.opencontainers.image.base.digest=${{ steps.check.outputs.base-digest }}
 
       - name: Image bauen & pushen
-        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure'
         uses: docker/build-push-action@v6.15.0
         with:
           context: ./php86
@@ -69,7 +71,7 @@ jobs:
 
       # Benachrichtigung nach erfolgreichem Build via curl
       - name: ntfy Benachrichtigung senden
-        if: success() && (github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true')
+        if: success() && (github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true' || steps.check.outcome == 'failure')
         run: |
           curl \
             -d "Neues PHP 8.6 Image gebaut und auf GHCR gepusht!" \
