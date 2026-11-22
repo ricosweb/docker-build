@@ -9,6 +9,7 @@ on:
       - ".github/workflows/caddy-build.yml"
       - "php86/**"
       - ".github/workflows/docker-build-php86.yml"
+      - "README.md"
   workflow_dispatch:
   schedule:
     # Läuft jeden Tag um 02:00 Uhr UTC automatisch

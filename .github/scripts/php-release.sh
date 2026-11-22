@@ -16,7 +16,7 @@ alpine=$(run 'cat /etc/alpine-release')
 if [ -z "$php" ]; then echo "::error::PHP-Version nicht ermittelt"; exit 1; fi
 
 # Erweiterungen und Bibliotheken
-module=$(run 'php -m' | grep -v '^\[' | grep -v '^$' | sort -f | paste -sd ',' - | sed 's/,/, /g')
+module=$(run 'php -m' | grep -v '^\[' | grep -v '^$' | sort -fu | paste -sd ',' - | sed 's/,/, /g')
 details=$(run 'php -r '"'"'
   $gd = function_exists("gd_info") ? gd_info()["GD Version"] : "-";
   $zip = class_exists("ZipArchive") ? ZipArchive::LIBZIP_VERSION : "-";
