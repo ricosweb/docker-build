@@ -17,6 +17,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # für Release mit Versionsangaben
+      packages: write
     steps:
       - name: Code auschecken
         uses: actions/checkout@v4
@@ -69,12 +72,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Versionen auslesen, Tag :8.5.x setzen, Release nur bei neuer PHP-Version
+      - name: Versionen & Release
+        if: github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true'
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/php-release.sh ghcr.io/ricosweb/custom_php8.5_image 8.5
+
       # Benachrichtigung nach erfolgreichem Build via curl
       - name: ntfy Benachrichtigung senden
         if: success() && (github.event_name != 'schedule' || steps.check.outputs.needs-updating == 'true')
         run: |
+          if [ "${{ steps.rel.outputs.neu }}" = "true" ]; then
+            msg="Neue Version: PHP ${{ steps.rel.outputs.php }} (Alpine ${{ steps.rel.outputs.alpine }}) – Release ${{ steps.rel.outputs.tag }} angelegt."
+          else
+            msg="PHP-8.5-Image neu gebaut (PHP ${{ steps.rel.outputs.php }}, Alpine ${{ steps.rel.outputs.alpine }})."
+          fi
           curl \
-            -d "Neues PHP 8.5 Image gebaut und auf GHCR gepusht!" \
+            -d "$msg" \
             -H "Title: GHCR Build Erfolgreich" \
             -H "Tags: package,rocket" \
             https://ntfy.sh/JMDikA6mwmjpyfm7
