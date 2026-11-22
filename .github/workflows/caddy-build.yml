@@ -20,7 +20,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # für Release mit Versionsangaben
       packages: write
     steps:
       - name: Code auschecken
@@ -84,16 +84,84 @@ jobs:
           cache-from: type=gha,scope=caddy
           cache-to: type=gha,mode=max,scope=caddy
 
-      - name: Version auslesen
+      - name: Versionen auslesen
         if: steps.go.outputs.build == 'true'
         id: ver
-        run: echo "version=$(docker run --rm ${{ env.IMAGE }}:latest caddy version | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: |
+          docker pull -q ${{ env.IMAGE }}:latest >/dev/null
+          info=$(docker run --rm ${{ env.IMAGE }}:latest caddy build-info)
+          caddy=$(docker run --rm ${{ env.IMAGE }}:latest caddy version | cut -d' ' -f1)
+          cf=$(echo "$info"     | awk '$2=="github.com/caddy-dns/cloudflare"{print $3}')
+          libdns=$(echo "$info" | awk '$2=="github.com/libdns/cloudflare"{print $3}')
+          go=$(echo "$info"     | awk '$1=="go"{print $2; exit}')
+          if [ -z "$caddy" ] || [ -z "$cf" ]; then
+            echo "::error::Caddy- oder Cloudflare-Version nicht ermittelt"; echo "$info"; exit 1
+          fi
+          alpine=$(docker run --rm --entrypoint cat ${{ env.IMAGE }}:latest /etc/alpine-release 2>/dev/null || echo "?")
+          digest=$(docker buildx imagetools inspect ${{ env.IMAGE }}:latest --format '{{json .Manifest.Digest}}' | tr -d '"')
+          for v in caddy cf libdns go alpine digest; do echo "$v=${!v}" >> "$GITHUB_OUTPUT"; echo "$v=${!v}"; done
+          echo "tag=caddy-${caddy}-cf-${cf}" >> "$GITHUB_OUTPUT"
+
+      # Zusätzliche Tags zum gezielten Zurückgehen: :v2.x.y und :v2.x.y-cf-v0.x.y
+      - name: Versions-Tags setzen
+        if: steps.go.outputs.build == 'true'
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE }}:${{ steps.ver.outputs.caddy }} \
+            -t ${{ env.IMAGE }}:${{ steps.ver.outputs.caddy }}-cf-${{ steps.ver.outputs.cf }} \
+            ${{ env.IMAGE }}:latest
+
+      # Release nur, wenn sich Caddy- oder Cloudflare-Version geändert hat (sonst kein Release-Rauschen
+      # bei reinen Neubauten wegen des Basis-Images)
+      - name: Release anlegen (bei neuer Version)
+        if: steps.go.outputs.build == 'true'
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          CADDY: ${{ steps.ver.outputs.caddy }}
+          CF: ${{ steps.ver.outputs.cf }}
+          LIBDNS: ${{ steps.ver.outputs.libdns }}
+          GOV: ${{ steps.ver.outputs.go }}
+          ALPINE: ${{ steps.ver.outputs.alpine }}
+          DIGEST: ${{ steps.ver.outputs.digest }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG gibt es schon – nur Neubau (z. B. neues Basis-Image), kein neues Release."
+            echo "neu=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          vorher=$(gh release list --limit 50 --json tagName --jq '[.[] | select(.tagName | startswith("caddy-"))][0].tagName // ""')
+          {
+            echo "Caddy mit Cloudflare-DNS-Modul, gebaut am $(date -u +%d.%m.%Y)."
+            echo
+            echo "| Komponente | Version |"
+            echo "|---|---|"
+            echo "| Caddy | [\`$CADDY\`](https://github.com/caddyserver/caddy/releases/tag/$CADDY) |"
+            echo "| caddy-dns/cloudflare | [\`$CF\`](https://github.com/caddy-dns/cloudflare/releases) |"
+            echo "| libdns/cloudflare | [\`$LIBDNS\`](https://github.com/libdns/cloudflare/releases) |"
+            echo "| Go | \`$GOV\` |"
+            echo "| Alpine (Basis) | \`$ALPINE\` |"
+            echo
+            [ -n "$vorher" ] && echo "Vorheriges Release: \`$vorher\`" && echo
+            echo "**Image:** \`${IMAGE}:latest\` · fest: \`${IMAGE}:${CADDY}-cf-${CF}\`"
+            echo
+            echo "Digest: \`$DIGEST\` · Plattformen: amd64, arm64, arm/v7"
+          } > notes.md
+          cat notes.md
+          gh release create "$TAG" --title "Caddy $CADDY · Cloudflare $CF" --notes-file notes.md --target "${{ github.sha }}"
+          echo "neu=true" >> "$GITHUB_OUTPUT"
 
       - name: ntfy Benachrichtigung senden
         if: success() && steps.go.outputs.build == 'true'
         run: |
+          if [ "${{ steps.release.outputs.neu }}" = "true" ]; then
+            msg="Neue Version: Caddy ${{ steps.ver.outputs.caddy }}, Cloudflare-Modul ${{ steps.ver.outputs.cf }} – Release ${{ steps.ver.outputs.tag }} angelegt."
+          else
+            msg="Caddy-Image neu gebaut (${{ steps.ver.outputs.caddy }}, Cloudflare ${{ steps.ver.outputs.cf }}, gleiche Versionen)."
+          fi
           curl \
-            -d "Neues Caddy-Image (${{ steps.ver.outputs.version }}, mit Cloudflare-DNS) gebaut und auf GHCR gepusht!" \
+            -d "$msg" \
             -H "Title: GHCR Build Erfolgreich" \
             -H "Tags: package,rocket" \
             https://ntfy.sh/JMDikA6mwmjpyfm7
