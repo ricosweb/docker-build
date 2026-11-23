@@ -9,9 +9,8 @@ on:
   workflow_dispatch:
   schedule:
     # Täglich 02:30 UTC: nur bauen, wenn das Caddy-Basis-Image neuer ist
+    # oder es eine neue Version des Cloudflare-Moduls gibt
     - cron: '30 2 * * *'
-    # Sonntags 03:30 UTC: immer bauen, damit Updates des Cloudflare-Moduls mitkommen
-    - cron: '30 3 * * 0'
 
 env:
   IMAGE: ghcr.io/ricosweb/caddy-cloudflare
@@ -35,12 +34,29 @@ jobs:
           image: 'ghcr.io/ricosweb/caddy-cloudflare:latest'
         continue-on-error: true   # beim allerersten Lauf gibt es das Image noch nicht
 
-      # Bauen bei Push/manuell, beim Wochen-Lauf, oder wenn das Basis-Image neuer ist
+      # Neueste Version des Cloudflare-Moduls (Go-Modul-Proxy) mit der aus dem letzten
+      # Release vergleichen. xcaddy baut ohne Versionsangabe immer genau diese neueste Version.
+      - name: Cloudflare-Modul prüfen
+        id: cf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          neu=$(curl -fsS https://proxy.golang.org/github.com/caddy-dns/cloudflare/@latest | jq -r '.Version // empty') || neu=""
+          aktuell=$(gh release list --limit 50 --json tagName \
+            --jq '[.[] | select(.tagName | startswith("caddy-"))][0].tagName // ""' | sed -n 's/.*-cf-//p')
+          echo "Cloudflare-Modul: neueste ${neu:-unbekannt}, im letzten Release ${aktuell:-keins}"
+          if [ -n "$neu" ] && [ "$neu" != "$aktuell" ]; then
+            echo "neu=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "neu=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Bauen bei Push/manuell, bei neuem Basis-Image oder neuer Version des Cloudflare-Moduls
       - name: Entscheiden, ob gebaut wird
         id: go
         run: |
           if [ "${{ github.event_name }}" != "schedule" ] \
-             || [ "${{ github.event.schedule }}" = "30 3 * * 0" ] \
+             || [ "${{ steps.cf.outputs.neu }}" = "true" ] \
              || [ "${{ steps.check.outputs.needs-updating }}" = "true" ] \
              || [ "${{ steps.check.outcome }}" = "failure" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
