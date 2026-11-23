@@ -32,7 +32,7 @@ Für ein Zurückgehen auf eine ältere Version den festen Tag statt `latest` ver
 
 - **Bei Änderungen** an den Dateien des jeweiligen Images (Push auf `main`) oder von Hand (*Actions → Run workflow*).
 - **Täglich** prüft jeder Workflow, ob das offizielle Basis-Image neuer ist als das eigene Image (Vergleich über das OCI-Label `org.opencontainers.image.base.digest`). Nur dann wird neu gebaut – so kommen Sicherheitsupdates von Alpine, PHP und Caddy automatisch mit.
-- **Caddy zusätzlich sonntags**, auch ohne neues Basis-Image, damit Updates des Cloudflare-Moduls mitkommen.
+- **Caddy zusätzlich**, sobald es eine neue Version des Cloudflare-Moduls gibt (täglicher Abgleich mit dem Go-Modul-Proxy und dem letzten Release).
 
 Nach jedem Build liest der Workflow die Versionen **aus dem fertigen Image** aus, setzt die festen Tags und legt ein **Release** an – aber nur, wenn sich die Hauptversion geändert hat (Caddy oder Cloudflare-Modul bzw. PHP). Reine Neubauten wegen eines neuen Basis-Images erzeugen kein Release.
 
